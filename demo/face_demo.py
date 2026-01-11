@@ -53,16 +53,12 @@ def cmd_verify(args):
         timeout=args.timeout
     )
     
+    # Result already printed in workflow
     if result.success:
-        print(f"\n✓ Verification successful!")
-        print(f"  User: {result.user_name} ({result.user_id})")
-        print(f"  Confidence: {result.confidence:.1f}%")
-        print(f"  Face score: {result.face_score:.3f}")
         return 0
     else:
-        print(f"\n✗ Verification failed: {result.message}")
         if result.face_score > 0:
-            print(f"  Best face score: {result.face_score:.3f}")
+            print(f"  Distance threshold: {workflow.face_threshold}")
         return 1
 
 
@@ -72,14 +68,10 @@ def cmd_identify(args):
     
     result = workflow.identify(timeout=args.timeout)
     
+    # Result already printed in workflow
     if result.success:
-        print(f"\n✓ Identification successful!")
-        print(f"  User: {result.user_name} ({result.user_id})")
-        print(f"  Confidence: {result.confidence:.1f}%")
-        print(f"  Face score: {result.face_score:.3f}")
         return 0
     else:
-        print(f"\n✗ Identification failed: {result.message}")
         return 1
 
 

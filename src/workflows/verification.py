@@ -87,7 +87,7 @@ class FaceVerificationWorkflow:
         self.db.initialize()
         
         # Verification parameters
-        self.face_threshold = self.config.face_recognition.tolerance
+        self.face_threshold = self.config.face_recognition.match_tolerance
         self.max_attempts = self.config.verification.max_attempts
         self.timeout = self.config.verification.timeout_seconds
         
@@ -173,8 +173,8 @@ class FaceVerificationWorkflow:
         user_name = user.name if user else user_id
         
         # Detect and encode face
-        result = self.face_system.detect_and_encode(frame)
-        if result is None:
+        detected_faces = self.face_system.detect_and_encode(frame)
+        if not detected_faces:
             return VerificationResult(
                 success=False,
                 user_id=user_id,
@@ -183,32 +183,33 @@ class FaceVerificationWorkflow:
                 message="No face detected"
             )
         
-        detected_face, quality = result
+        # Get largest face
+        detected_face = self.face_system.get_largest_face(detected_faces)
         
         # Compare against template
-        match = self.face_system.verify(
-            detected_face.encoding,
-            template
-        )
+        is_match, distance, _ = self.face_system.verify(frame, template)
         
         processing_time = (time.time() - start_time) * 1000
+        
+        # Calculate confidence (inverse of distance)
+        confidence = max(0.0, (1.0 - distance / self.face_threshold) * 100)
         
         # Log verification attempt
         self.db.log_verification(
             user_id=user_id,
             verification_type='face',
-            success=match.is_match,
-            face_score=match.similarity
+            success=is_match,
+            face_score=distance
         )
         
         return VerificationResult(
-            success=match.is_match,
+            success=is_match,
             user_id=user_id,
             user_name=user_name,
-            confidence=match.confidence,
-            face_score=match.similarity,
+            confidence=confidence,
+            face_score=distance,
             mode=VerificationMode.VERIFY,
-            message="Verification successful" if match.is_match else f"Face mismatch (score: {match.similarity:.2f})",
+            message=f"Verified as {user_name}" if is_match else f"Not {user_name} (distance: {distance:.3f})",
             processing_time_ms=processing_time
         )
     
@@ -233,54 +234,58 @@ class FaceVerificationWorkflow:
             )
         
         # Detect and encode face
-        result = self.face_system.detect_and_encode(frame)
-        if result is None:
+        detected_faces = self.face_system.detect_and_encode(frame)
+        if not detected_faces:
             return VerificationResult(
                 success=False,
                 mode=VerificationMode.IDENTIFY,
                 message="No face detected"
             )
         
-        detected_face, quality = result
+        # Get largest face
+        detected_face = self.face_system.get_largest_face(detected_faces)
         
         # Find best match
-        match = self.face_system.identify(detected_face.encoding, templates)
+        user_id, distance, _ = self.face_system.identify(frame, templates)
         
         processing_time = (time.time() - start_time) * 1000
         
-        if match is None or not match.is_match:
+        if user_id is None or distance > self.face_threshold:
             self.db.log_verification(
                 user_id=None,
                 verification_type='face',
                 success=False,
-                face_score=match.similarity if match else 0
+                face_score=distance
             )
             
             return VerificationResult(
                 success=False,
                 mode=VerificationMode.IDENTIFY,
                 message="No matching user found",
-                face_score=match.similarity if match else 0,
+                face_score=distance,
                 processing_time_ms=processing_time
             )
         
         # Get user info
-        user = self.db.get_user(match.user_id)
-        user_name = user.name if user else match.user_id
+        user = self.db.get_user(user_id)
+        user_name = user.name if user else user_id
+        
+        # Calculate confidence
+        confidence = max(0.0, (1.0 - distance / self.face_threshold) * 100)
         
         self.db.log_verification(
-            user_id=match.user_id,
+            user_id=user_id,
             verification_type='face',
             success=True,
-            face_score=match.similarity
+            face_score=distance
         )
         
         return VerificationResult(
             success=True,
-            user_id=match.user_id,
+            user_id=user_id,
             user_name=user_name,
-            confidence=match.confidence,
-            face_score=match.similarity,
+            confidence=confidence,
+            face_score=distance,
             mode=VerificationMode.IDENTIFY,
             message=f"Identified as {user_name}",
             processing_time_ms=processing_time
@@ -344,9 +349,11 @@ class FaceVerificationWorkflow:
                     )
                 
                 # Read frame
-                success, frame = self.camera.read_frame()
-                if not success or frame is None:
+                capture_result = self.camera.read_frame()
+                if not capture_result.success or capture_result.frame is None:
                     continue
+                
+                frame = capture_result.frame
                 
                 # Verify frame
                 result = self.verify_frame(frame, user_id)
@@ -406,14 +413,22 @@ class FaceVerificationWorkflow:
                 
                 # Success - return immediately
                 if result.success:
-                    print(f"✓ Verification successful (score: {result.face_score:.2f})")
+                    print(f"\n✓ VERIFICATION PASSED")
+                    print(f"  User: {result.user_name} ({result.user_id})")
+                    print(f"  Match distance: {result.face_score:.3f}")
+                    print(f"  Confidence: {result.confidence:.1f}%")
+                    print(f"  Attempts: {attempts}/{self.max_attempts}")
                     time.sleep(0.5)  # Brief pause to show success
                     return result
                 
-                print(f"  Attempt {attempts}: score={result.face_score:.2f}")
+                print(f"  Attempt {attempts}: distance={result.face_score:.3f}, not a match")
             
             # Max attempts reached
-            print(f"✗ Verification failed after {attempts} attempts")
+            print(f"\n✗ VERIFICATION FAILED")
+            print(f"  User: {user.name} ({user_id})")
+            print(f"  Failed after {attempts} attempts")
+            if best_result and best_result.face_score > 0:
+                print(f"  Best distance: {best_result.face_score:.3f} (threshold: {self.face_threshold})")
             return best_result or VerificationResult(
                 success=False,
                 user_id=user_id,
@@ -471,9 +486,11 @@ class FaceVerificationWorkflow:
                     )
                 
                 # Read frame
-                success, frame = self.camera.read_frame()
-                if not success or frame is None:
+                capture_result = self.camera.read_frame()
+                if not capture_result.success or capture_result.frame is None:
                     continue
+                
+                frame = capture_result.frame
                 
                 # Identify frame
                 result = self.identify_frame(frame)
@@ -505,12 +522,11 @@ class FaceVerificationWorkflow:
                 )
                 
                 # Draw face box if detected
-                detect_result = self.face_system.detect_and_encode(frame)
-                if detect_result:
-                    detected_face, _ = detect_result
+                detect_faces = self.face_system.detect_and_encode(frame)
+                if detect_faces:
                     preview_frame = self.face_system.draw_detections(
                         preview_frame,
-                        [detected_face]
+                        detect_faces
                     )
                 
                 if show_preview:
@@ -525,7 +541,10 @@ class FaceVerificationWorkflow:
                 
                 # Success - return immediately
                 if result.success:
-                    print(f"✓ Identified as {result.user_name} (score: {result.face_score:.2f})")
+                    print(f"\n✓ MATCH FOUND")
+                    print(f"  User: {result.user_name} ({result.user_id})")
+                    print(f"  Match distance: {result.face_score:.3f}")
+                    print(f"  Confidence: {result.confidence:.1f}%")
                     time.sleep(0.5)
                     return result
                 
@@ -569,10 +588,11 @@ class FaceVerificationWorkflow:
                 return
             
             while True:
-                success, frame = self.camera.read_frame()
-                if not success or frame is None:
+                capture_result = self.camera.read_frame()
+                if not capture_result.success or capture_result.frame is None:
                     continue
                 
+                frame = capture_result.frame
                 result = self.verify_frame(frame, user_id)
                 
                 if show_preview:
@@ -620,10 +640,11 @@ class FaceVerificationWorkflow:
                 return
             
             while True:
-                success, frame = self.camera.read_frame()
-                if not success or frame is None:
+                capture_result = self.camera.read_frame()
+                if not capture_result.success or capture_result.frame is None:
                     continue
                 
+                frame = capture_result.frame
                 result = self.identify_frame(frame)
                 
                 if show_preview:
