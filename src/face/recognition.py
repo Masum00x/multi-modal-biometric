@@ -392,6 +392,21 @@ class FaceRecognitionSystem:
         
         return detected_faces
     
+    def get_largest_face(self, faces: List[DetectedFace]) -> Optional[DetectedFace]:
+        """
+        Get the largest face from a list of detected faces.
+        
+        Args:
+            faces: List of detected faces.
+            
+        Returns:
+            Largest DetectedFace or None if list is empty.
+        """
+        if not faces:
+            return None
+        
+        return max(faces, key=lambda f: f.location.area)
+    
     def verify(
         self,
         image: np.ndarray,
@@ -414,7 +429,7 @@ class FaceRecognitionSystem:
             return False, 1.0, None
         
         # Use largest face
-        face = max(detected, key=lambda f: f.location.area)
+        face = self.get_largest_face(detected)
         
         # Compare
         is_match, min_dist, _ = self.matcher.compare_to_template(template, face.encoding)
@@ -443,7 +458,7 @@ class FaceRecognitionSystem:
             return None, 1.0, None
         
         # Use largest face
-        face = max(detected, key=lambda f: f.location.area)
+        face = self.get_largest_face(detected)
         
         # Find best match
         user_id, distance = self.matcher.find_best_match(templates, face.encoding)

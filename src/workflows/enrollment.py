@@ -267,23 +267,23 @@ class FaceEnrollmentWorkflow:
                 current_time = time.time()
                 auto_capture = (current_time - last_capture_time) >= self.sample_interval
                 
-                # Try to detect face for preview
-                result = self.face_system.detect_and_encode(frame)
+                # Try to detect faces for preview
+                detected_faces = self.face_system.detect_and_encode(frame)
                 
-                if result is not None:
-                    detected_face, quality = result
+                if detected_faces:
+                    largest_face = self.face_system.get_largest_face(detected_faces)
                     
                     # Draw detection on preview
                     preview_frame = self.face_system.draw_detections(
                         frame,
-                        [detected_face]
+                        detected_faces
                     )
                     
-                    # Add quality indicator
-                    color = (0, 255, 0) if quality >= self.min_quality else (0, 165, 255)
+                    # Add status indicator
+                    color = (0, 255, 0)
                     cv2.putText(
                         preview_frame,
-                        f"Quality: {quality:.1f}%",
+                        f"Face detected - ready to capture",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
@@ -291,8 +291,8 @@ class FaceEnrollmentWorkflow:
                         2
                     )
                     
-                    # Auto-capture if interval passed and quality is good
-                    if auto_capture and quality >= self.min_quality:
+                    # Auto-capture if interval passed
+                    if auto_capture and largest_face is not None and largest_face.encoding is not None:
                         captured, msg, _ = self.capture_sample(session, frame)
                         if captured:
                             last_capture_time = current_time
