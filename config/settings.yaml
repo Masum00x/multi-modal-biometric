@@ -1,0 +1,47 @@
+# System Configuration
+system:
+  name: "Multi-Modal Biometric Auth"
+  version: "0.1.0"
+  debug: true
+
+# Camera settings
+camera:
+  device_id: 0                    # Default webcam
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  warmup_frames: 10               # Frames to skip for camera warmup
+
+# Face recognition settings
+face_recognition:
+  detection_model: "cnn"          # "cnn" (GPU) or "hog" (CPU)
+  encoding_model: "large"         # "large" (accurate) or "small" (fast)
+  num_jitters: 2                  # Re-sampling for encoding
+  match_tolerance: 0.6            # Distance threshold (lower = stricter)
+  strict_tolerance: 0.5           # For high-security mode
+  min_face_size: 50               # Minimum face size in pixels
+  
+# Quality thresholds
+quality:
+  min_brightness: 40              # Minimum average brightness (0-255)
+  max_brightness: 220             # Maximum average brightness
+  min_sharpness: 50               # Laplacian variance threshold
+  face_detection_confidence: 0.8  # Minimum confidence for face detection
+
+# Database settings
+database:
+  path: "data/biometric.db"
+  encrypt_templates: false        # Set to true for production
+
+# Enrollment settings  
+enrollment:
+  num_samples: 5                  # Number of face samples to capture
+  sample_interval: 0.5            # Seconds between samples
+  require_quality_check: true
+
+# Verification settings
+verification:
+  max_attempts: 3
+  timeout_seconds: 30
+  require_liveness: false         # Liveness detection (future feature)
