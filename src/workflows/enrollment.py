@@ -132,27 +132,31 @@ class FaceEnrollmentWorkflow:
             Tuple of (success, message, detected_face)
         """
         # Detect and encode face
-        result = self.face_system.detect_and_encode(frame)
+        detected_faces = self.face_system.detect_and_encode(frame)
         
-        if result is None:
+        if not detected_faces:
             return False, "No face detected", None
         
-        detected_face, quality = result
+        # Get largest face
+        detected_face = self.face_system.get_largest_face(detected_faces)
         
-        # Check quality
-        if quality < self.min_quality:
-            return False, f"Low quality image ({quality:.1f})", None
+        # Estimate quality based on face size
+        quality = detected_face.location.area / (frame.shape[0] * frame.shape[1]) * 100
+        
+        # Check quality (face should be at least 5% of frame)
+        if quality < 5.0:
+            return False, f"Face too small, move closer", None
         
         # Check for duplicate/similar samples
         if session.captured_samples:
             # Compare with existing samples to ensure diversity
             for existing in session.captured_samples:
-                similarity = self.face_system.matcher.get_similarity_score(
-                    detected_face.encoding,
-                    existing.encoding
-                )
-                # If too similar (>0.95), it's probably the same pose
-                if similarity > 0.95:
+                # Calculate distance between encodings
+                import face_recognition
+                distance = float(face_recognition.face_distance([existing.encoding], detected_face.encoding)[0])
+                
+                # If too similar (distance < 0.1), it's probably the same pose
+                if distance < 0.1:
                     return False, "Too similar to existing sample, move slightly", None
         
         # Valid sample
